@@ -26,7 +26,7 @@
     - CMake Tools
 3. **生成库**:
     ```bash
-    - CMake Build
+    CMake Build
     ```
 
 ## 🛠️ 技术细节
