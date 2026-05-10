@@ -1,7 +1,8 @@
 # ISFP-Connect-X-Plane-Bridge
 
 ✈️ ISFP云际模拟飞行连飞平台 X-Plane 10/11/12插件
-## 项目说明:
+
+## 💡 项目说明:
 - ** 该项目是ISFP-Connect官方配套子插件，专为 X-Plane 模拟器打造连飞桥接能力。 ** 
 
 ## 🔗 核心功能
