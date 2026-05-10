@@ -25,7 +25,9 @@
     - C++
     - CMake Tools
 3. **生成库**:
-    - >CMake Build
+    ```bash
+    - CMake Build
+    ```
 
 ## 🛠️ 技术细节
 - **FSD 协议**: 完整实现 FSD 协议，支持位置报告、文本消息、心跳等功能。 
