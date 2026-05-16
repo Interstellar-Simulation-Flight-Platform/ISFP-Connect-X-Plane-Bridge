@@ -1,5 +1,5 @@
 /*
- * ISFP Connect Bridge - DataRef Manager
+ * ISFPConnectBridge - DataRef Manager
  * Manages X-Plane DataRefs reading and writing
  */
 
@@ -39,12 +39,12 @@ DataRefManager::~DataRefManager() {
 
 bool DataRefManager::Initialize() {
     FindDataRefs();
-    XPLMDebugString("ISFP Connect Bridge: DataRef manager initialized\n");
+    XPLMDebugString("ISFPConnectBridge: DataRef manager initialized\n");
     return true;
 }
 
 void DataRefManager::Shutdown() {
-    XPLMDebugString("ISFP Connect Bridge: DataRef manager shutdown\n");
+    XPLMDebugString("ISFPConnectBridge: DataRef manager shutdown\n");
 }
 
 void DataRefManager::FindDataRefs() {
@@ -105,7 +105,7 @@ FlightData DataRefManager::GetFlightData() {
     
     // Read attitude (convert to radians)
     data.pitch = dr_pitch_ ? XPLMGetDataf(dr_pitch_) * 3.14159f / 180.0f : 0.0f;
-    data.roll = dr_roll_ ? XPLMGetDataf(dr_roll_) * 3.14159f / 180.0f : 0.0f;
+    data.bank = dr_roll_ ? XPLMGetDataf(dr_roll_) * 3.14159f / 180.0f : 0.0f;
     data.heading = dr_heading_ ? XPLMGetDataf(dr_heading_) : 0.0f;
     
     // Read speed
