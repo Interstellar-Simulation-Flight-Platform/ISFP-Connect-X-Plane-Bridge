@@ -120,6 +120,11 @@ namespace ISFP {
                         g_valid_players.clear();
                         XPLMDebugString("ISFPConnectBridge:CSL:已清空玩家数据列表\n");
                     }
+                    {
+                        std::lock_guard<std::mutex> draw_lock(g_draw_mutex);
+                        g_draw_players.clear();
+                        XPLMDebugString("ISFPConnectBridge:CSL:已清空绘制数据列表\n");
+                    }
                     break;
 
                 case MainThreadTaskType::DESTROY_AND_CLEAR:
@@ -131,6 +136,11 @@ namespace ISFP {
                         std::lock_guard<std::mutex> data_lock(g_player_mutex);
                         g_valid_players.clear();
                         XPLMDebugString("ISFPConnectBridge:CSL:已清空玩家数据列表\n");
+                    }
+                    {
+                        std::lock_guard<std::mutex> draw_lock(g_draw_mutex);
+                        g_draw_players.clear();
+                        XPLMDebugString("ISFPConnectBridge:CSL:已清空绘制数据列表\n");
                     }
                     break;
             }
@@ -386,16 +396,65 @@ namespace ISFP {
         try {
             json Raw_Data = json::parse(json_str);
 
-            // Validate JSON format
-            if (!Raw_Data.contains("type") || Raw_Data["type"] != "server_player_data" ||
-                !Raw_Data.contains("mycid") || !Raw_Data.contains("data") || !Raw_Data["data"].is_array()) {
+            // Validate JSON format - check type first
+            if (!Raw_Data.contains("type") || !Raw_Data.contains("data") || !Raw_Data["data"].is_array()) {
                 XPLMDebugString("ISFPConnectBridge:JsonParse:JSON数据格式无效\n");
+                return;
+            }
+
+            std::string data_type = Raw_Data["type"].get<std::string>();
+            if (data_type != "server_player_data-FSD9" &&
+                data_type != "server_player_data-API") {
+                XPLMDebugString("ISFPConnectBridge:JsonParse:未知数据类型\n");
+                return;
+            }
+
+            const json& player_list = Raw_Data["data"];
+
+            // ======= FSD9 mode: skip self-position lookup and radius filtering =======
+            if (data_type == "server_player_data-FSD9") {
+                std::vector<ISFP::FlightData> temp_players;
+
+                for (const auto& player : player_list) {
+                    // Parse flight data for all players
+                    ISFP::FlightData data{};
+                    data.valid = true;
+                    data.latitude = player["latitude"].get<double>();
+                    data.longitude = player["longitude"].get<double>();
+                    data.altitude_msl = player.contains("altitude") ? player["altitude"].get<double>() : 0.0;
+                    data.pitch = player.contains("pitch") ? player["pitch"].get<float>() : 0.0f;
+                    data.bank = player.contains("bank") ? player["bank"].get<float>() : 0.0f;
+                    data.heading = player.contains("heading") ? player["heading"].get<float>() : 0.0f;
+                    data.groundspeed = player.contains("ground_speed") ? player["ground_speed"].get<float>() : 0.0f;
+                    data.callsign = player.contains("callsign") ? player["callsign"].get<std::string>() : "QuanQuan";
+                    data.aircraft = player.contains("aircraft") ? player["aircraft"].get<std::string>() : "A319";
+                    data.last_update_time = XPLMGetElapsedTime();
+
+                    temp_players.push_back(data);
+                }
+
+                // Update global player data (thread-safe)
+                std::lock_guard<std::mutex> lock(ISFP::g_player_mutex);
+                ISFP::g_valid_players = temp_players;
+
+                // Sync draw list
+                std::lock_guard<std::mutex> draw_lock(g_draw_mutex);
+                g_draw_players = temp_players;
+
+                XPLMDebugString(("ISFPConnectBridge:CSL:FSD9模式 - 有效玩家数量：" + std::to_string(temp_players.size()) + "\n").c_str());
+                return;
+            }
+
+            // ======= API mode: requires mycid, self-position, and radius filtering =======
+
+            // Validate mycid for non-FSD9 types
+            if (!Raw_Data.contains("mycid")) {
+                XPLMDebugString("ISFPConnectBridge:JsonParse:缺少mycid字段\n");
                 return;
             }
 
             // Get own CID
             int my_cid = std::stoi(Raw_Data["mycid"].get<std::string>());
-            const json& player_list = Raw_Data["data"];
 
             // Find own position
             double self_lat = 0.0, self_lon = 0.0;
@@ -438,6 +497,7 @@ namespace ISFP {
                 data.heading = player.contains("heading") ? player["heading"].get<float>() : 0.0f;
                 data.groundspeed = player.contains("ground_speed") ? player["ground_speed"].get<float>() : 0.0f;
                 data.callsign = player.contains("callsign") ? player["callsign"].get<std::string>() : "QuanQuan";
+                data.aircraft = player.contains("aircraft") ? player["aircraft"].get<std::string>() : "A319";
                 data.last_update_time = XPLMGetElapsedTime();
 
                 temp_players.push_back(data);
