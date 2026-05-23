@@ -303,8 +303,21 @@ namespace ISFP
         }
     }
 
-    // Create aircraft by matching model name (folder -> OBJ lookup)
-    CSLAircraft* CSLManager::CreateAircraftByModelName(const std::string& model_name) 
+    // Extract airline code from callsign (e.g., "CCA1234" -> "CCA")
+    std::string ExtractAirlineCode(const std::string& callsign) {
+        std::string code;
+        for (char ch : callsign) {
+            if (std::isalpha(static_cast<unsigned char>(ch))) {
+                code += ch;
+            } else {
+                break;
+            }
+        }
+        return code;
+    }
+
+    // Create aircraft by matching model name and airline code (folder -> OBJ lookup)
+    CSLAircraft* CSLManager::CreateAircraftByModelName(const std::string& model_name, const std::string& airline_code) 
     {
         if (!initialized_ || model_name.empty()) return nullptr;
 
@@ -317,31 +330,65 @@ namespace ISFP
         if (cfg_json.is_discarded()) return nullptr;
 
         std::string csl_path = cfg_json["csl_path"].get<std::string>();
+        std::replace(csl_path.begin(), csl_path.end(), '\\', '/');
         json aircraft_map = cfg_json["aircraft_mapped"];
 
-        char xp_root[512] = {0};
-        XPLMGetSystemPath(xp_root);
         std::string final_path;
         bool found = false;
 
-        // Match folder name and load first available OBJ
-        for (auto& item : aircraft_map.items()) {
-            std::string folder = item.key();
-            if (folder.find(model_name) != std::string::npos) {
-                for (auto& obj : item.value()) {
-                    std::string obj_file = obj.get<std::string>();
-                    final_path = (fs::path(csl_path) / folder / obj_file).string();
-                    std::replace(final_path.begin(), final_path.end(), '\\', '/');
-                    found = true;
-                    break;
+        // Build relative path from X-Plane root (XPLMLoadObject resolves relative paths)
+        auto build_path = [&](const std::string& folder, const std::string& obj_file) -> std::string {
+            return csl_path + "/" + folder + "/" + obj_file;
+            // e.g. "Resources/plugins/CSL/A319/A319_AAF.obj"
+        };
+
+        // First pass: try to match folder containing BOTH airline code AND model name
+        if (!airline_code.empty()) {
+            for (auto& item : aircraft_map.items()) {
+                std::string folder = item.key();
+                if (folder.find(airline_code) != std::string::npos &&
+                    folder.find(model_name) != std::string::npos) {
+                    for (auto& obj : item.value()) {
+                        std::string obj_file = obj.get<std::string>();
+                        final_path = build_path(folder, obj_file);
+                        found = true;
+                        break;
+                    }
+                    if (found) break;
                 }
-                if (found) break;
             }
         }
 
-        // Fallback to default A320 model
+        // Second pass: try to match folder containing only model name (fallback)
         if (!found) {
-            final_path = (fs::path(xp_root) / csl_path / "A319" / "A319_CCA.obj").string();
+            for (auto& item : aircraft_map.items()) {
+                std::string folder = item.key();
+                if (folder.find(model_name) != std::string::npos) {
+                    for (auto& obj : item.value()) {
+                        std::string obj_file = obj.get<std::string>();
+                        final_path = build_path(folder, obj_file);
+                        found = true;
+                        break;
+                    }
+                    if (found) break;
+                }
+            }
+        }
+
+        // Fallback: try to find any A319 folder from the mapped list
+        if (!found) {
+            for (auto& item : aircraft_map.items()) {
+                std::string folder = item.key();
+                if (folder.find("A319") != std::string::npos) {
+                    for (auto& obj : item.value()) {
+                        std::string obj_file = obj.get<std::string>();
+                        final_path = build_path(folder, obj_file);
+                        found = true;
+                        break;
+                    }
+                    if (found) break;
+                }
+            }
         }
 
         CSLAircraft* ac = new CSLAircraft();

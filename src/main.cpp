@@ -4,6 +4,18 @@
  * Communicates with ISFP-Connect Python app via TCP
  */
 
+ /*
+ 更新日志:
+  - **v1.1.2 (2026-05-17)**:
+  - 修复:功能:CSL映射其他飞机(插件端)
+  - 修复:功能:当断开FSD连接后仍然显示机组标牌
+ - **v1.1.0 (2026-05-16)**:
+  - 新增:功能:CSL映射(目前所有飞机均映射为A319)。
+  - 新增:UI:菜单插件功能控制面板,支持控制FSD/CSL状态。
+- **v1.0.0 (2026-05-10)**:
+  - 首发正式版本，支持 X-Plane 全版本连飞接入、完整 FSD 协议适配、模拟器内置菜单管理全套插件能力。
+*/
+
 #include "isfp_plugin.h"
 #include "XPLMMenus.h"
 #include "XPLMPlugin.h"
@@ -346,7 +358,9 @@ static float FlightLoopCallback(float inElapsedSinceLastCall,
     // CSLManager
     for (size_t i = 0; i < current_players.size(); ++i) {
         if (i >= ISFP::g_csl->GetAircraftCount()) {
-            CSLAircraft* ac = ISFP::g_csl->CreateAircraftByModelName("A320fCFM_CDN");
+            std::string model_name = current_players[i].aircraft.empty() ? "A319" : current_players[i].aircraft;
+            std::string airline_code = ISFP::ExtractAirlineCode(current_players[i].callsign);
+            CSLAircraft* ac = ISFP::g_csl->CreateAircraftByModelName(model_name, airline_code);
             if (!ac) continue;
         }
         CSLAircraft* ac = ISFP::g_csl->GetAircraft(i);
