@@ -64,6 +64,7 @@ namespace ISFP {
         bool valid;
         double last_update_time; //用于CSL玩家数据过期判断->断开连接
         std::string callsign;
+        std::string aircraft; // 飞机模型名称（用于CSL映射）
 
         FlightData() : valid(false) {}
     };
@@ -251,7 +252,7 @@ namespace ISFP {
             double delta_time
         );
 
-        CSLAircraft* CreateAircraftByModelName(const std::string& model_name);
+        CSLAircraft* CreateAircraftByModelName(const std::string& model_name, const std::string& airline_code = "");
 
         CSLAircraft* GetAircraft(size_t index);
 
@@ -270,6 +271,7 @@ namespace ISFP {
     bool LoadCSLConfig(CSLConfig& outCfg);
     void SaveCSLConfig(const CSLConfig& cfg);
     void ValidateAndUpdateCSLConfig();
+    std::string ExtractAirlineCode(const std::string& callsign);
 
     //调用接口
     CSLAircraft* SpawnCSLAircraftAtLocation(
