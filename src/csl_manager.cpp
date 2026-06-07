@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <XPLMMap.h>
 #include <XPLMGraphics.h>
+#include <XPLMScenery.h>
+#include "logger.h"
 
 #undef min
 #undef max
@@ -24,12 +26,18 @@ namespace ISFP
         return aircraft_list_.size();
     }
 
+    // ==================== Profiles Path ====================
+    std::string GetProfilesPath() {
+        char xp_root[512] = { 0 };
+        XPLMGetSystemPath(xp_root);
+        fs::path profiles = fs::path(xp_root) / "Resources" / "plugins" / "ISFP_xLink" / "Profiles";
+        return profiles.string();
+    }
+
     // ==================== CSL Config File Operations ====================
     // Get full path of CSL configuration file
     std::string GetConfigFilePath() {
-        char xp_root[512] = { 0 };
-        XPLMGetSystemPath(xp_root);
-        fs::path cfg_path = fs::path(xp_root) / "Resources" / "plugins" / "ISFPConnectBridge" / "CSL_Config.json";
+        fs::path cfg_path = fs::path(GetProfilesPath()) / "CSL_Config.json";
         return cfg_path.string();
     }
 
@@ -37,7 +45,7 @@ namespace ISFP
     bool LoadCSLConfig(CSLConfig& outCfg) {
         std::string config_path = GetConfigFilePath();
         if (!fs::exists(config_path)) {
-            XPLMDebugString("ISFPConnectBridge:CSL:配置文件不存在\n");
+            Logger::CSL("ISFP-xLink:CSL:配置文件不存在\n");
             return false;
         }
 
@@ -45,17 +53,17 @@ namespace ISFP
             std::ifstream file(config_path);
             json j = json::parse(file, nullptr, false);
             if (j.is_discarded()) {
-                XPLMDebugString("ISFPConnectBridge:CSL:配置文件解析失败\n");
+                Logger::CSL("ISFP-xLink:CSL:配置文件解析失败\n");
                 return false;
             }
 
             outCfg.csl_path = j["csl_path"].get<std::string>();
             outCfg.aircraft_mapped.clear();
-            XPLMDebugString("ISFPConnectBridge:CSL:配置加载成功\n");
+            Logger::CSL("ISFP-xLink:CSL:配置加载成功\n");
             return true;
         }
         catch (...) {
-            XPLMDebugString("ISFPConnectBridge:CSL:配置加载异常\n");
+            Logger::CSL("ISFP-xLink:CSL:配置加载异常\n");
             return false;
         }
     }
@@ -71,7 +79,7 @@ namespace ISFP
             file << std::setw(4) << j << std::endl;
         }
         catch (...) {
-            XPLMDebugString("ISFPConnectBridge:CSL:配置保存失败\n");
+            Logger::CSL("ISFP-xLink:CSL:配置保存失败\n");
         }
     }
 
@@ -88,7 +96,7 @@ namespace ISFP
         fs::path full_csl_path = fs::path(xp_root) / cfg.csl_path;
 
         if (!fs::exists(full_csl_path)) {
-            XPLMDebugString("ISFPConnectBridge:CSL:CSL根目录不存在\n");
+            Logger::CSL("ISFP-xLink:CSL:CSL根目录不存在\n");
             SaveCSLConfig(cfg);
             return;
         }
@@ -117,7 +125,7 @@ namespace ISFP
             }
         }
         catch (...) {
-            XPLMDebugString("ISFPConnectBridge:CSL:扫描模型目录失败\n");
+            Logger::CSL("ISFP-xLink:CSL:扫描模型目录失败\n");
             return;
         }
 
@@ -128,10 +136,10 @@ namespace ISFP
             j["aircraft_mapped"] = aircraft_map;
             std::ofstream file(config_path);
             file << std::setw(4) << j << std::endl;
-            XPLMDebugString("ISFPConnectBridge:CSL:模型配置已生成\n");
+            Logger::CSL("ISFP-xLink:CSL:模型配置已生成\n");
         }
         catch (...) {
-            XPLMDebugString("ISFPConnectBridge:CSL:配置写入失败\n");
+            Logger::CSL("ISFP-xLink:CSL:配置写入失败\n");
         }
     }
 
@@ -142,6 +150,7 @@ namespace ISFP
         draw_info_.x = 0;
         draw_info_.y = 0;
         draw_info_.z = -10000;
+        terrain_probe_ = XPLMCreateProbe(xplm_ProbeY);
     }
 
     CSLAircraft::~CSLAircraft() {
@@ -152,11 +161,11 @@ namespace ISFP
     bool CSLAircraft::LoadModel(const char* objFilePath) {
         Destroy();
 
-        XPLMDebugString(("ISFPConnectBridge:CSL:加载模型: " + std::string(objFilePath) + "\n").c_str());
+        Logger::CSL(("ISFP-xLink:CSL:加载模型: " + std::string(objFilePath) + "\n").c_str());
         
         obj_ = XPLMLoadObject(objFilePath);
         if (!obj_) {
-            XPLMDebugString("ISFPConnectBridge:CSL:模型加载失败\n");
+            Logger::CSL("ISFP-xLink:CSL:模型加载失败\n");
             return false;
         }
 
@@ -164,11 +173,11 @@ namespace ISFP
         if (!instance_) {
             XPLMUnloadObject(obj_);
             obj_ = nullptr;
-            XPLMDebugString("ISFPConnectBridge:CSL:实例创建失败\n");
+            Logger::CSL("ISFP-xLink:CSL:实例创建失败\n");
             return false;
         }
 
-        XPLMDebugString("ISFPConnectBridge:CSL:模型加载成功\n");
+        Logger::CSL("ISFP-xLink:CSL:模型加载成功\n");
         return instance_ != nullptr;
     }
 
@@ -176,20 +185,28 @@ namespace ISFP
     void CSLAircraft::UpdatePosition(const FlightData& data) {
         if (!instance_ || !data.valid) return;
 
-        double altitude_meters = data.altitude_msl * 0.3048;
+        double altitude_m = data.altitude_msl * 0.3048;
         double local_x, local_y, local_z;
-        XPLMWorldToLocal(
-            data.latitude,
-            data.longitude,
-            altitude_meters,
-            &local_x,
-            &local_y,
-            &local_z
-        );
+        XPLMWorldToLocal(data.latitude, data.longitude, altitude_m, &local_x, &local_y, &local_z);
 
-        draw_info_.x = static_cast<float>(local_x);
-        draw_info_.y = static_cast<float>(local_y);
-        draw_info_.z = static_cast<float>(local_z);
+        // Probe terrain to check if aircraft is near ground
+        if (terrain_probe_) {
+            // Get probe position at same lat/lon (use MSL 0 for probe x/z)
+            double probe_x, probe_y0, probe_z;
+            XPLMWorldToLocal(data.latitude, data.longitude, 0.0, &probe_x, &probe_y0, &probe_z);
+            XPLMProbeInfo_t pi;
+            pi.structSize = sizeof(pi);
+            if (XPLMProbeTerrainXYZ(terrain_probe_, (float)probe_x, 5000.0f, (float)probe_z, &pi) == xplm_ProbeHitTerrain) {
+                double agl_m = local_y - pi.locationY;
+                if (fabs(agl_m) < 30.48) { // within 100 feet
+                    local_y = (double)pi.locationY + 1.0; // snap to 1m above ground
+                }
+            }
+        }
+
+        draw_info_.x = (float)local_x;
+        draw_info_.y = (float)local_y;
+        draw_info_.z = (float)local_z;
 
         draw_info_.pitch = static_cast<float>(data.pitch);
         draw_info_.heading = static_cast<float>(data.heading);
@@ -209,6 +226,10 @@ namespace ISFP
 
     // Destroy instance and unload model
     void CSLAircraft::Destroy() {
+        if (terrain_probe_) {
+            XPLMDestroyProbe(terrain_probe_);
+            terrain_probe_ = nullptr;
+        }
         if (instance_) {
             XPLMDestroyInstance(instance_);
             instance_ = nullptr;
@@ -231,7 +252,7 @@ namespace ISFP
         
         initialized_ = true;
         ValidateAndUpdateCSLConfig();
-        XPLMDebugString("ISFPConnectBridge:CSL:管理器初始化完成\n");
+        Logger::CSL("ISFP-xLink:CSL:管理器初始化完成\n");
         return true;
     }
 
@@ -240,7 +261,7 @@ namespace ISFP
         if (!initialized_ || running_) return false;
         
         running_ = true;
-        XPLMDebugString("ISFPConnectBridge:CSL:管理器已启动\n");
+        Logger::CSL("ISFP-xLink:CSL:管理器已启动\n");
         return true;
     }
 
@@ -252,7 +273,7 @@ namespace ISFP
         for (auto* ac : aircraft_list_) {
             if (ac) ac->Hide();
         }
-        XPLMDebugString("ISFPConnectBridge:CSL:管理器已停止\n");
+        Logger::CSL("ISFP-xLink:CSL:管理器已停止\n");
     }
 
     // Destroy all aircraft instances
@@ -261,7 +282,7 @@ namespace ISFP
             if (ac) delete ac;
         }
         aircraft_list_.clear();
-        XPLMDebugString("ISFPConnectBridge:CSL:所有飞机模型已销毁\n");
+        Logger::CSL("ISFP-xLink:CSL:所有飞机模型已销毁\n");
     }
 
     // Full shutdown of CSL system
@@ -303,21 +324,8 @@ namespace ISFP
         }
     }
 
-    // Extract airline code from callsign (e.g., "CCA1234" -> "CCA")
-    std::string ExtractAirlineCode(const std::string& callsign) {
-        std::string code;
-        for (char ch : callsign) {
-            if (std::isalpha(static_cast<unsigned char>(ch))) {
-                code += ch;
-            } else {
-                break;
-            }
-        }
-        return code;
-    }
-
     // Create aircraft by matching model name and airline code (folder -> OBJ lookup)
-    CSLAircraft* CSLManager::CreateAircraftByModelName(const std::string& model_name, const std::string& airline_code) 
+    CSLAircraft* CSLManager::CreateAircraftByModelName(const std::string& model_name, const std::string& airline_code, const std::string& aircraft_family)
     {
         if (!initialized_ || model_name.empty()) return nullptr;
 
@@ -342,40 +350,28 @@ namespace ISFP
             // e.g. "Resources/plugins/CSL/A319/A319_AAF.obj"
         };
 
-        // First pass: try to match folder containing BOTH airline code AND model name
-        if (!airline_code.empty()) {
-            for (auto& item : aircraft_map.items()) {
-                std::string folder = item.key();
-                if (folder.find(airline_code) != std::string::npos &&
-                    folder.find(model_name) != std::string::npos) {
-                    for (auto& obj : item.value()) {
-                        std::string obj_file = obj.get<std::string>();
+        // First: find folder matching model name (e.g. "B738")
+        for (auto& item : aircraft_map.items()) {
+            std::string folder = item.key();
+            if (folder.find(model_name) != std::string::npos) {
+                // Folder found — pick obj: prefer airline match (e.g. "CES"), fallback to first
+                for (auto& obj : item.value()) {
+                    std::string obj_file = obj.get<std::string>();
+                    if (!airline_code.empty() && obj_file.find(airline_code) != std::string::npos) {
                         final_path = build_path(folder, obj_file);
                         found = true;
                         break;
                     }
-                    if (found) break;
-                }
-            }
-        }
-
-        // Second pass: try to match folder containing only model name (fallback)
-        if (!found) {
-            for (auto& item : aircraft_map.items()) {
-                std::string folder = item.key();
-                if (folder.find(model_name) != std::string::npos) {
-                    for (auto& obj : item.value()) {
-                        std::string obj_file = obj.get<std::string>();
+                    if (final_path.empty())
                         final_path = build_path(folder, obj_file);
-                        found = true;
-                        break;
-                    }
-                    if (found) break;
                 }
+                if (!found && !final_path.empty())
+                    found = true;
+                break; // matched folder, done regardless
             }
         }
 
-        // Fallback: try to find any A319 folder from the mapped list
+        // Not found → directly load A319 as fallback
         if (!found) {
             for (auto& item : aircraft_map.items()) {
                 std::string folder = item.key();
@@ -391,9 +387,25 @@ namespace ISFP
             }
         }
 
+        // No matching aircraft found after all four passes
+        if (!found) {
+            Logger::CSL(("ISFP-xLink:CSL:No matching aircraft found for model=" + model_name +
+                (airline_code.empty() ? "" : " airline=" + airline_code) +
+                (aircraft_family.empty() ? "" : " family=" + aircraft_family) + "\n").c_str());
+        }
+
         CSLAircraft* ac = new CSLAircraft();
         if (ac->LoadModel(final_path.c_str())) {
             aircraft_list_.push_back(ac);
+
+            // Log spawned aircraft model and path if logging enabled
+            if (g_csl_log_enabled) {
+                Logger::CSL(("ISFP-xLink:CSL_LOG:Spawn aircraft -> obj: " + final_path +
+                    " | model: " + model_name +
+                    (airline_code.empty() ? "" : " | airline: " + airline_code) +
+                    (aircraft_family.empty() ? "" : " | family: " + aircraft_family) + "\n").c_str());
+            }
+
             return ac;
         }
 
@@ -414,28 +426,8 @@ namespace ISFP
         if (it != aircraft_list_.end()) {
             delete ac;
             aircraft_list_.erase(it);
-            XPLMDebugString("ISFPConnectBridge:CSL:飞机已移除\n");
+            Logger::CSL("ISFP-xLink:CSL:飞机已移除\n");
         }
-    }
-
-    // Predict aircraft position using ground speed and heading
-    void CSLManager::PredictAircraftPosition(
-        double& lat, double& lon,
-        float heading, float groundspeed,
-        double delta_time
-    ) {
-        const double KNOTS_TO_MPS = 0.514444;
-        double speed_mps = groundspeed * KNOTS_TO_MPS;
-
-        const double DEG_TO_METER = 111319.9;
-        double heading_rad = heading * M_PI / 180.0;
-
-        double distance = speed_mps * delta_time;
-        double d_lat = (distance * cos(heading_rad)) / DEG_TO_METER;
-        double d_lon = (distance * sin(heading_rad)) / (DEG_TO_METER * cos(lat * M_PI / 180.0));
-
-        lat += d_lat;
-        lon += d_lon;
     }
 
 } // namespace ISFP
