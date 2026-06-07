@@ -64,9 +64,8 @@ namespace ISFP {
         bool valid;
         double last_update_time; //用于CSL玩家数据过期判断->断开连接
         std::string callsign;
-
         std::string aircraft; // 飞机模型名称（用于CSL映射）
-
+        std::string aircraft_family; // 飞机机型家族（如A320、B738），来自JSON的_aircraft_family字段
 
         FlightData() : valid(false) {}
     };
@@ -76,12 +75,19 @@ namespace ISFP {
     extern std::mutex g_player_mutex;
     extern std::vector<FlightData> g_draw_players;
     extern std::mutex g_draw_mutex;
+    extern std::atomic<bool> g_csl_log_enabled;
+
+    // EFB Query Results (thread-safe)
+    extern std::string g_efb_route_result;
+    extern std::mutex g_efb_route_mutex;
+    extern std::string g_efb_weather_result;
+    extern std::mutex g_efb_weather_mutex;
 
     // Plugin version info
-    constexpr const char* PLUGIN_NAME = "ISFP Connect Bridge";
-    constexpr const char* PLUGIN_SIGNATURE = "com.isfp.connect";
-    constexpr const char* PLUGIN_DESCRIPTION = "ISFP Connect Plugin for X-Plane - Native TCP Server";
-    constexpr int PLUGIN_VERSION = 110;
+    constexpr const char* PLUGIN_NAME = "ISFP-xLink";
+    constexpr const char* PLUGIN_SIGNATURE = "com.isfp.xlink";
+    constexpr const char* PLUGIN_DESCRIPTION = "ISFP-xLink - X-Plane Native Plugin";
+    constexpr int PLUGIN_VERSION = 1230;
 
     // Default server config - plugin acts as server
     constexpr const char* DEFAULT_HOST = "0.0.0.0";  // Listen on all interfaces
@@ -113,6 +119,7 @@ namespace ISFP {
         bool IsClientConnected() const { return client_connected_; }
         
         bool SendData(const FlightData& data);
+        bool SendJson(const std::string& json_str);
 
         // MainTread
         void QueueMainThreadTask(MainThreadTaskType task_type);
@@ -224,6 +231,7 @@ namespace ISFP {
     private:
         XPLMObjectRef obj_ = nullptr;
         XPLMInstanceRef instance_ = nullptr;
+        XPLMProbeRef terrain_probe_ = nullptr;
         XPLMDrawInfo_t draw_info_;
 
         std::string m_callsign; // 模型的呼号
@@ -248,13 +256,7 @@ namespace ISFP {
         void UpdateAllAircraft(const std::vector<FlightData>& flight_list);
         void UpdateAircraft(const FlightData* flight_data);
 
-        static void PredictAircraftPosition(
-            double& lat, double& lon,
-            float heading, float groundspeed,
-            double delta_time
-        );
-
-        CSLAircraft* CreateAircraftByModelName(const std::string& model_name, const std::string& airline_code = "");
+        CSLAircraft* CreateAircraftByModelName(const std::string& model_name, const std::string& airline_code = "", const std::string& aircraft_family = "");
 
         CSLAircraft* GetAircraft(size_t index);
 
@@ -273,7 +275,9 @@ namespace ISFP {
     bool LoadCSLConfig(CSLConfig& outCfg);
     void SaveCSLConfig(const CSLConfig& cfg);
     void ValidateAndUpdateCSLConfig();
-    std::string ExtractAirlineCode(const std::string& callsign);
+
+    // Profiles path helper
+    std::string GetProfilesPath();
 
     //调用接口
     CSLAircraft* SpawnCSLAircraftAtLocation(
@@ -286,10 +290,112 @@ namespace ISFP {
         float roll = 0.0f
     );
 
+    // Language
+    enum class Language { EN, CN };
+    extern Language g_language;
+
+    // Hotkey binding
+    struct HotkeyBinding {
+        int vkey = 'I';       // Virtual key code
+        bool ctrl = false;    // Ctrl modifier
+        bool shift = true;    // Shift modifier
+        bool alt = false;     // Alt modifier
+    };
+    extern HotkeyBinding g_hotkey;
+    extern HotkeyBinding g_mouseyoke_hotkey;
+
+    // Sync menu checkmarks with current state
+    void SyncMenuCheckmarks();
+
     // Global instances
     extern NetworkManager* g_network;
     extern DataRefManager* g_datarefs;
     extern CSLManager* g_csl;
+    extern int g_port;
+    extern std::atomic<bool> g_fsd_enabled;
+    extern std::atomic<bool> g_csl_enabled;
+
+    // Mouse Yoke Manager
+    class MouseYokeManager;
+    extern MouseYokeManager* g_mouseyoke;
+    extern std::atomic<bool> g_mouseyoke_enabled;
+
+    // ==================== Schema-Driven ConfigManager ====================
+    // All settings are defined in a single schema table (RegisterDefaults) with:
+    //   - key: dot-notation path, e.g. "window.position.x"
+    //   - default: typed default value
+    //   - description: human-readable documentation
+    //   - section: group name for logical organization
+    //
+    // JSON output follows a clean, hierarchical config format:
+    //   {
+    //       "meta": { "version": 1, ... },
+    //       "window": { "position": { "x": 50, "y": 50 }, ... },
+    //       "ui": { "language": "EN", "scale": 1.0, ... },
+    //       ...
+    //   }
+    //
+    // To add a new setting: just add one Register() call in RegisterDefaults().
+    struct ConfigSchemaEntry {
+        const char* key;            // dot-notation path, e.g. "window.position.x"
+        json        default_value;  // typed default
+        const char* description;    // human-readable description
+        const char* section;        // group name (window, ui, plugin, hotkey, meta)
+    };
+
+    class ConfigManager {
+    public:
+        ConfigManager();
+        ~ConfigManager();
+
+        // Register all known settings with defaults (called once after construction)
+        void RegisterDefaults();
+
+        // Load from Settings.json, then ApplyDefaults() for any missing keys
+        bool Load();
+        // Save entire data_ to Settings.json with clean formatting
+        bool Save();
+
+        // --- Typed getters (read from data_, fallback to default if not found) ---
+        int         GetInt(const std::string& key, int default_val = 0) const;
+        float       GetFloat(const std::string& key, float default_val = 0.0f) const;
+        bool        GetBool(const std::string& key, bool default_val = false) const;
+        std::string GetString(const std::string& key, const std::string& default_val = "") const;
+
+        // --- Typed setters (write into data_) ---
+        void SetInt(const std::string& key, int val);
+        void SetFloat(const std::string& key, float val);
+        void SetBool(const std::string& key, bool val);
+        void SetString(const std::string& key, const std::string& val);
+
+        // Key existence check
+        bool HasKey(const std::string& key) const;
+        void RemoveKey(const std::string& key);
+
+        // Access all registered schema entries (for introspection / migration)
+        const std::vector<ConfigSchemaEntry>& GetSchema() const { return schema_; }
+
+    private:
+        json data_;
+        std::string file_path_;
+        std::vector<ConfigSchemaEntry> schema_;
+
+        // Fill in any missing keys from their registered defaults
+        void ApplyDefaults();
+
+        // Register a single schema entry
+        void Register(
+            const char* key,
+            json default_value,
+            const char* description,
+            const char* section);
+
+        // Navigate dot-notation path to parent node, extract leaf key name
+        json*       ResolvePtr(std::string& out_leaf, const std::string& key, bool create);
+        const json* ResolvePtr(std::string& out_leaf, const std::string& key) const;
+    };
+
+    extern ConfigManager* g_config;
 
 } // namespace ISFP
 

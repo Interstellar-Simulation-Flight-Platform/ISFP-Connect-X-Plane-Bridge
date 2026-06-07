@@ -1,10 +1,11 @@
 /*
- * ISFPConnectBridge - DataRef Manager
+ * ISFP-Link - DataRef Manager
  * Manages X-Plane DataRefs reading and writing
  */
 
 #include "isfp_plugin.h"
 #include <cmath>
+#include "logger.h"
 
 namespace ISFP {
 
@@ -39,12 +40,12 @@ DataRefManager::~DataRefManager() {
 
 bool DataRefManager::Initialize() {
     FindDataRefs();
-    XPLMDebugString("ISFPConnectBridge: DataRef manager initialized\n");
+    Logger::Main("ISFP-xLink: DataRef manager initialized\n");
     return true;
 }
 
 void DataRefManager::Shutdown() {
-    XPLMDebugString("ISFPConnectBridge: DataRef manager shutdown\n");
+    Logger::Main("ISFP-xLink: DataRef manager shutdown\n");
 }
 
 void DataRefManager::FindDataRefs() {
