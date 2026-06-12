@@ -58,6 +58,7 @@ namespace ISFP {
         int com1_freq;
         int com2_freq;
         int transponder;
+        std::string squawk_mode; // "S"=未开启, "N"=已开启
         int gear_deploy;
         float flaps_ratio;
         float throttle_ratio;
@@ -87,7 +88,7 @@ namespace ISFP {
     constexpr const char* PLUGIN_NAME = "ISFP-xLink";
     constexpr const char* PLUGIN_SIGNATURE = "com.isfp.xlink";
     constexpr const char* PLUGIN_DESCRIPTION = "ISFP-xLink - X-Plane Native Plugin";
-    constexpr int PLUGIN_VERSION = 1230;
+    constexpr int PLUGIN_VERSION = 1260;
 
     // Default server config - plugin acts as server
     constexpr const char* DEFAULT_HOST = "0.0.0.0";  // Listen on all interfaces
@@ -161,8 +162,9 @@ namespace ISFP {
         // For receiving data from client
         std::string Rcv_Buffer;
         std::thread Rcv_Thread;
-        bool running_ = true;
-        void RevData();
+        std::atomic<bool> running_{true};
+        int rcv_epoch_{0};  // Incremented on each StartRcvThread() to detect stale RevData instances
+        void RevData(int epoch);
         void ProcessRcvJson(const std::string& json_str);
     };
 
@@ -202,6 +204,7 @@ namespace ISFP {
         XPLMDataRef dr_com1_freq_;
         XPLMDataRef dr_com2_freq_;
         XPLMDataRef dr_transponder_;
+        XPLMDataRef dr_transponder_mode_;
         XPLMDataRef dr_gear_deploy_;
         XPLMDataRef dr_flaps_ratio_;
         XPLMDataRef dr_throttle_ratio_;
