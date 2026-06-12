@@ -29,6 +29,7 @@ DataRefManager::DataRefManager() {
     dr_com1_freq_ = nullptr;
     dr_com2_freq_ = nullptr;
     dr_transponder_ = nullptr;
+    dr_transponder_mode_ = nullptr;
     dr_gear_deploy_ = nullptr;
     dr_flaps_ratio_ = nullptr;
     dr_throttle_ratio_ = nullptr;
@@ -78,6 +79,7 @@ void DataRefManager::FindDataRefs() {
     dr_com1_freq_ = XPLMFindDataRef("sim/cockpit/radios/com1_freq_hz");
     dr_com2_freq_ = XPLMFindDataRef("sim/cockpit/radios/com2_freq_hz");
     dr_transponder_ = XPLMFindDataRef("sim/cockpit/radios/transponder_code");
+    dr_transponder_mode_ = XPLMFindDataRef("sim/cockpit2/radios/actuators/transponder_mode");
     
     // Landing gear
     dr_gear_deploy_ = XPLMFindDataRef("sim/aircraft/parts/acf_gear_deploy");
@@ -123,10 +125,19 @@ FlightData DataRefManager::GetFlightData() {
     data.mag_heading = dr_mag_heading_ ? XPLMGetDataf(dr_mag_heading_) : 0.0f;
     data.true_heading = dr_true_heading_ ? XPLMGetDataf(dr_true_heading_) : 0.0f;
     
-    // Read radio frequencies
-    data.com1_freq = dr_com1_freq_ ? XPLMGetDatai(dr_com1_freq_) : 0;
-    data.com2_freq = dr_com2_freq_ ? XPLMGetDatai(dr_com2_freq_) : 0;
+    // Read radio frequencies (X-Plane stores as MHz×100: 122.800MHz → 12280, convert to kHz integer: 122.800MHz → 122800)
+    data.com1_freq = dr_com1_freq_ ? XPLMGetDatai(dr_com1_freq_) * 10 : 0;
+    data.com2_freq = dr_com2_freq_ ? XPLMGetDatai(dr_com2_freq_) * 10 : 0;
     data.transponder = dr_transponder_ ? XPLMGetDatai(dr_transponder_) : 0;
+    
+    // Read transponder mode (0=Off, 1=Standby, 2=Reply, 3=ALT)
+    if (dr_transponder_mode_) {
+        int mode[1];
+        XPLMGetDatavi(dr_transponder_mode_, mode, 0, 1);
+        data.squawk_mode = (mode[0] >= 2) ? "N" : "S";
+    } else {
+        data.squawk_mode = "S";
+    }
     
     // Read landing gear status
     if (dr_gear_deploy_) {
