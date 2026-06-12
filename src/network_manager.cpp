@@ -193,6 +193,9 @@ namespace ISFP {
 
     // Stop TCP server and close all connections
     void NetworkManager::StopServer() {
+        // Stop receive thread first to prevent stale RevData from interfering
+        StopRcvThread();
+
         server_running_ = false;
         client_connected_ = false;
 
@@ -311,6 +314,7 @@ namespace ISFP {
         json << "\"com1_freq\":" << data.com1_freq << ",";
         json << "\"com2_freq\":" << data.com2_freq << ",";
         json << "\"transponder\":" << data.transponder << ",";
+        json << "\"squark\":\"" << data.squawk_mode << "\",";
         json << "\"gear_deploy\":" << data.gear_deploy << ",";
         json << "\"flaps_ratio\":" << data.flaps_ratio << ",";
         json << "\"throttle_ratio\":" << data.throttle_ratio;
@@ -371,7 +375,9 @@ namespace ISFP {
                 Rcv_Thread.detach();
             }
             running_ = true;
-            Rcv_Thread = std::thread(&NetworkManager::RevData, this);
+            rcv_epoch_++;  // new epoch for this RevData instance
+            int epoch = rcv_epoch_;
+            Rcv_Thread = std::thread(&NetworkManager::RevData, this, epoch);
         }
     }
 
@@ -404,11 +410,14 @@ namespace ISFP {
     }
 
     // Receive thread: read data from client
-    void NetworkManager::RevData() {
+    void NetworkManager::RevData(int epoch) {
         char buffer[4096];
         std::string Tmp_Buffer;
 
         while (running_) {
+            // If epoch changed, a newer RevData thread was started — exit immediately
+            if (epoch != rcv_epoch_) break;
+
             // Check client_connected_ under the socket mutex for thread safety
             SOCKET current_socket;
             bool is_connected;
@@ -427,10 +436,13 @@ namespace ISFP {
             int Ret = select(0, &readfds, nullptr, nullptr, &timeout);
             if (Ret <= 0) continue;
 
+            // Use the local socket copy for recv to avoid reading from a replaced socket
             int Rcv_Len = 0;
             {
                 std::lock_guard<std::mutex> lock(socket_mutex_);
-                Rcv_Len = recv(client_socket_, buffer, sizeof(buffer) - 1, 0);
+                // Double-check the socket hasn't been replaced since we captured current_socket
+                if (client_socket_ != current_socket) continue;
+                Rcv_Len = recv(current_socket, buffer, sizeof(buffer) - 1, 0);
             }
 
             if (Rcv_Len <= 0) {
