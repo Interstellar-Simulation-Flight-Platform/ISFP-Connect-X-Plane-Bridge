@@ -115,7 +115,19 @@ namespace ISFP
                     std::string ext = file_entry.path().extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
                     if (ext == ".obj") {
-                        obj_list.push_back(file_entry.path().filename().string());
+                        // 跳过非标准 OBJ（开头4字节全0, 如某些 X-CSL 的航空公司占位文件）
+                        bool valid = true;
+                        FILE* f = nullptr;
+                        fopen_s(&f, file_entry.path().string().c_str(), "rb");
+                        if (f) {
+                            char hdr[4] = {};
+                            if (fread(hdr, 1, 4, f) == 4 && hdr[0] == 0 && hdr[1] == 0 && hdr[2] == 0 && hdr[3] == 0)
+                                valid = false;
+                            fclose(f);
+                        }
+                        if (valid) {
+                            obj_list.push_back(file_entry.path().filename().string());
+                        }
                     }
                 }
 
@@ -340,6 +352,27 @@ namespace ISFP
         std::string csl_path = cfg_json["csl_path"].get<std::string>();
         std::replace(csl_path.begin(), csl_path.end(), '\\', '/');
         json aircraft_map = cfg_json["aircraft_mapped"];
+
+        // 如果用户设置了绝对路径，转为相对于 X-Plane 根目录的路径
+        // XPLMLoadObject 只接受相对路径
+        {
+            char xp_root[512] = { 0 };
+            XPLMGetSystemPath(xp_root);
+            std::string xp_root_str = xp_root;
+            std::replace(xp_root_str.begin(), xp_root_str.end(), '\\', '/');
+            // 确保以 / 结尾
+            if (!xp_root_str.empty() && xp_root_str.back() != '/')
+                xp_root_str += '/';
+            std::string csl_lower = csl_path;
+            std::string root_lower = xp_root_str;
+            std::transform(csl_lower.begin(), csl_lower.end(), csl_lower.begin(), ::tolower);
+            std::transform(root_lower.begin(), root_lower.end(), root_lower.begin(), ::tolower);
+            if (csl_lower.find(root_lower) == 0) {
+                // 绝对路径 → 转为相对路径
+                csl_path = csl_path.substr(xp_root_str.length());
+                Logger::CSL(("ISFP-xLink:CSL:绝对路径转相对: " + csl_path + "\n").c_str());
+            }
+        }
 
         std::string final_path;
         bool found = false;

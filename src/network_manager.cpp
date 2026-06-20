@@ -168,7 +168,10 @@ namespace ISFP {
         addr.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(listen_socket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-            Logger::Network("ISFP-xLink:Server:Socket绑定端口失败\n");
+            int err = WSAGetLastError();
+            char msg[128];
+            snprintf(msg, sizeof(msg), "ISFP-xLink:Server:Socket绑定端口%d失败, 错误码: %d\n", port, err);
+            Logger::Network(msg);
             closesocket(listen_socket_);
             listen_socket_ = INVALID_SOCKET;
             return false;
@@ -516,6 +519,34 @@ namespace ISFP {
                     g_efb_weather_result = content;
                 }
                 Logger::Network("ISFP-xLink:EFB:气象查询结果已接收\n");
+                return;
+            }
+
+            // ======= Handle ATC / Controller Data =======
+            if (data_type == "Send:ATC") {
+                if (!Raw_Data.contains("data") || !Raw_Data["data"].is_array()) {
+                    Logger::Network("ISFP-xLink:JsonParse:Send:ATC 数据格式无效\n");
+                    return;
+                }
+                std::vector<ISFP::ATCData> temp_atc;
+                for (const auto& atc : Raw_Data["data"]) {
+                    ISFP::ATCData d{};
+                    d.callsign = atc.contains("callsign") ? atc["callsign"].get<std::string>() : "";
+                    d.frequency = atc.contains("frequency") ? atc["frequency"].get<std::string>() : "";
+                    d.controller_type = atc.contains("type") ? atc["type"].get<std::string>() : "";
+                    d.latitude = atc.contains("latitude") ? atc["latitude"].get<double>() : 0.0;
+                    d.longitude = atc.contains("longitude") ? atc["longitude"].get<double>() : 0.0;
+                    d.rating = atc.contains("rating") ? atc["rating"].get<int>() : 0;
+                    d.valid = true;
+                    if (!d.callsign.empty()) {
+                        temp_atc.push_back(d);
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_atc_mutex);
+                    g_atc_list = temp_atc;
+                }
+                Logger::Network(("ISFP-xLink:ATC:收到管制员数据 " + std::to_string(temp_atc.size()) + " 条\n").c_str());
                 return;
             }
 
