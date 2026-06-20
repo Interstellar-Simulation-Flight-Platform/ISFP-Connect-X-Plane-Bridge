@@ -6,6 +6,10 @@
 
  /*
  更新日志:
+  - **v1.2.8 (2026-06-19)**:
+  - 修复:功能:管制员信息不显示
+  - **v1.2.7 (2026-06-19)**:
+  - 修复:功能:首次启动游戏快捷键不生效
   - **v1.2.6 (2026-06-13)**:
   - 修复:功能:同一个ISFP-Connect重复连接导致连接失败
   - 修复:功能:获取的COM1/COM2数值错误
@@ -67,6 +71,10 @@ namespace ISFP {
     DataRefManager* g_datarefs = nullptr;
     CSLManager* g_csl = nullptr;
 
+    // ATC / Controller data
+    std::vector<ATCData> g_atc_list;
+    std::mutex g_atc_mutex;
+
     // Plugin state
     static std::atomic<bool> g_plugin_enabled{false};
     static XPLMFlightLoopID g_flight_loop_id = nullptr;
@@ -95,6 +103,8 @@ namespace ISFP {
     // Hotkey
     HotkeyBinding g_hotkey;
     HotkeyBinding g_mouseyoke_hotkey;
+    static bool g_hotkey_was_down = false;  // prevent repeated toggles while held
+    static bool g_mouseyoke_hotkey_was_down = false;
 
     //CSL Config
     std::vector<FlightData> g_valid_players;
@@ -497,7 +507,48 @@ static float FlightLoopCallback(float inElapsedSinceLastCall,
                                  void* inRef) {
 
     // Safety: check plugin state FIRST before any access (avoids crash during reload)
-    if (!g_plugin_enabled.load() || !g_network || !g_datarefs) {
+    if (!g_plugin_enabled.load()) {
+        return 0.1f;
+    }
+
+    // ---- Hotkey polling (Shift+I by default) ----
+    if (g_hotkey.vkey > 0) {
+        bool ctrl_ok  = g_hotkey.ctrl  ? (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 : true;
+        bool shift_ok = g_hotkey.shift ? (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0 : true;
+        bool alt_ok   = g_hotkey.alt   ? (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0 : true;
+        bool key_down = (GetAsyncKeyState(g_hotkey.vkey) & 0x8000) != 0;
+        bool hotkey_down = ctrl_ok && shift_ok && alt_ok && key_down;
+        if (hotkey_down && !g_hotkey_was_down) {
+            // Toggle UI
+            if (g_imgui) {
+                g_imgui->ToggleVisibility();
+                SyncMenuCheckmarks();
+            }
+        }
+        g_hotkey_was_down = hotkey_down;
+    }
+    // Mouse-yoke hotkey
+    if (g_mouseyoke_hotkey.vkey > 0) {
+        bool ctrl_ok  = g_mouseyoke_hotkey.ctrl  ? (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 : true;
+        bool shift_ok = g_mouseyoke_hotkey.shift ? (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0 : true;
+        bool alt_ok   = g_mouseyoke_hotkey.alt   ? (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0 : true;
+        bool key_down = (GetAsyncKeyState(g_mouseyoke_hotkey.vkey) & 0x8000) != 0;
+        bool hotkey_down = ctrl_ok && shift_ok && alt_ok && key_down;
+        if (hotkey_down && !g_mouseyoke_hotkey_was_down) {
+            g_mouseyoke_enabled = !g_mouseyoke_enabled;
+            if (g_mouseyoke) {
+                if (g_mouseyoke_enabled) {
+                    g_mouseyoke->SetHidden(false);
+                } else {
+                    g_mouseyoke->SetHidden(true);
+                }
+            }
+        }
+        g_mouseyoke_hotkey_was_down = hotkey_down;
+    }
+    // ---- End hotkey polling ----
+
+    if (!g_network || !g_datarefs) {
         return 0.1f;
     }
 
