@@ -71,12 +71,27 @@ namespace ISFP {
         FlightData() : valid(false) {}
     };
 
+    // ATC / Controller data structure
+    struct ATCData {
+        std::string callsign;
+        std::string frequency;     // e.g. "118.100"
+        std::string controller_type; // e.g. "TWR", "APP", "CTR"
+        double latitude  = 0.0;
+        double longitude = 0.0;
+        int rating = 0;
+        bool valid = false;
+    };
+
     // CSL Extern
     extern std::vector<FlightData> g_valid_players;
     extern std::mutex g_player_mutex;
     extern std::vector<FlightData> g_draw_players;
     extern std::mutex g_draw_mutex;
     extern std::atomic<bool> g_csl_log_enabled;
+
+    // ATC / Controller data
+    extern std::vector<ATCData> g_atc_list;
+    extern std::mutex g_atc_mutex;
 
     // EFB Query Results (thread-safe)
     extern std::string g_efb_route_result;
